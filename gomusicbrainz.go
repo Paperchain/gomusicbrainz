@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -23,22 +25,20 @@ const (
 )
 
 var (
-	AppName           string
-	AppVersion        string
+	// AppName indicates the Application Name
+	AppName string
+
+	// AppVersion indicates the version of the app ex:1.2.3
+	AppVersion string
+
+	// ContactURLOrEmail should be set to either an email address or a website for MusicBraniz to reach out
 	ContactURLOrEmail string
-	userAgentString   string
+
+	userAgentString string
+	replacer        = strings.NewReplacer("-", "", ".", "", " ", "")
 )
 
-// Recording is
-type Recording struct {
-	Title          string   `json:"title"`
-	Length         int      `json:"length"`
-	ID             string   `json:"id"`
-	Disambiguation string   `json:"disambiguation"`
-	ISRCs          []string `json:"isrcs"`
-	IsVideo        bool     `json:"video"`
-}
-
+// GetRecording returns the Recording object for a given MusicBrainzID
 func GetRecording(mbid string) (*Recording, error) {
 	if mbid == "" {
 		return nil, errors.New("MBID is empty")
@@ -47,7 +47,7 @@ func GetRecording(mbid string) (*Recording, error) {
 	u := apiBaseURL + recordingPath + mbid
 
 	params := make(map[string]string)
-	params["inc"] = "isrcs"
+	params["inc"] = "isrcs artist-credits"
 	params = addJSONParam(params)
 
 	result, err := GET(u, params)
@@ -58,9 +58,82 @@ func GetRecording(mbid string) (*Recording, error) {
 	var recording Recording
 	gjson.Unmarshal(result, &recording)
 
-	fmt.Printf("RECORDING: %+v\n", recording)
-
 	return &recording, nil
+}
+
+// GetWork returns the Music Work object per the given MusicBrainzID
+func GetWork(mbid string) (*Work, error) {
+	if mbid == "" {
+		return nil, errors.New("MBID is empty")
+	}
+
+	u := apiBaseURL + musicalWorkPath + mbid
+
+	params := make(map[string]string)
+	params["inc"] = "aliases"
+	params = addJSONParam(params)
+
+	result, err := GET(u, params)
+	if err != nil {
+		return nil, err
+	}
+
+	var work Work
+	gjson.Unmarshal(result, &work)
+
+	return &work, nil
+}
+
+func GetRecordingsByISRC(isrc string) (*ISRC, error) {
+	if isrc == "" {
+		return nil, errors.New("ISRC is empty")
+	}
+
+	if !isISRC(isrc) {
+		return nil, errors.New("Not a valid ISRC")
+	}
+
+	u := apiBaseURL + isrcPath + isrc
+
+	params := make(map[string]string)
+	params["inc"] = "isrcs artist-credits"
+	params = addJSONParam(params)
+
+	result, err := GET(u, params)
+	if err != nil {
+		return nil, err
+	}
+
+	var i ISRC
+	gjson.Unmarshal(result, &i)
+
+	return &i, nil
+}
+
+func GetWorksByISWC(iswc string) (*ISWC, error) {
+	if iswc == "" {
+		return nil, errors.New("ISWC is empty")
+	}
+
+	if !isISWC(iswc) {
+		return nil, errors.New("Not a valid ISWC")
+	}
+
+	u := apiBaseURL + iswcPath + iswc
+
+	params := make(map[string]string)
+	params["inc"] = "aliases"
+	params = addJSONParam(params)
+
+	result, err := GET(u, params)
+	if err != nil {
+		return nil, err
+	}
+
+	var i ISWC
+	gjson.Unmarshal(result, &i)
+
+	return &i, nil
 }
 
 // SetMusicBrainzConfig sets the configuration requirements
@@ -77,7 +150,8 @@ func REQUEST(method string, u string, body io.Reader) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var netTransport = &http.Transport{
+
+	netTransport := &http.Transport{
 		Dial: (&net.Dialer{
 			Timeout: 5 * time.Second,
 		}).Dial,
@@ -102,6 +176,12 @@ func REQUEST(method string, u string, body io.Reader) ([]byte, error) {
 	}
 	defer res.Body.Close()
 
+	fmt.Printf(`
+	   STATUS: %s
+	   RATE LIMIT: %s
+	   RATE LIMIT REMAINING: %s\n
+	   		`, res.Status, res.Header.Get("X-Ratelimit-Limit"), res.Header.Get("X-Ratelimit-Remaining"))
+
 	data, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
@@ -124,7 +204,48 @@ func GET(uri string, params map[string]string) ([]byte, error) {
 		u = pu.String()
 	}
 
-	return REQUEST("GET", u, nil)
+	return REQUEST(http.MethodGet, u, nil)
+}
+
+func retry(attempts int, sleep time.Duration, callback func(args ...interface{}) ([]byte, error)) ([]byte, error) {
+	var err error
+	for i := 0; i < attempts; i++ {
+		res, e := callback()
+		err = e
+		if err == nil {
+			return res, nil
+		}
+
+		if i > attempts {
+			break
+		}
+
+		time.Sleep(sleep)
+
+		fmt.Println("Retrying after error:", err)
+	}
+	return nil, fmt.Errorf("After %d attempts, last error: %s", attempts, err)
+}
+
+// isISRC checks for the input being a valid ISRC
+func isISRC(input string) bool {
+	r1 := regexp.MustCompile("^[A-Z]{2}[A-Z0-9]{3}[0-9]{2}[0-9]{5}$")
+	//r2 := regexp.MustCompile("^[A-F]{2}[A-F0-9]{3}[0-9]{2}[0-9]{5}$")
+
+	input = replacer.Replace(input)
+	upperInput := strings.ToUpper(input)
+
+	return r1.MatchString(upperInput) //|| r2.MatchString(upperInput)
+}
+
+// isISWC checks for the input being a valid UUID
+func isISWC(input string) bool {
+	r := regexp.MustCompile("^T[0-9]{3}[0-9]{3}[0-9]{3}[0-9]{1}$")
+
+	input = replacer.Replace(input)
+	upperInput := strings.ToUpper(input)
+
+	return r.MatchString(upperInput)
 }
 
 func validateConfig() error {
