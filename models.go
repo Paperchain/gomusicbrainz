@@ -1,10 +1,21 @@
 package gomusicbrainz
 
+type SearchArtistResult struct {
+	Count   int      `json:"count"`
+	Offset  int      `json:"offset"`
+	Artists []Artist `json:"artists"`
+}
+
 type Artist struct {
-	Disambiguation string `json:"disambiguation"`
-	ID             string `json:"id"`
-	SortName       string `json:"sort-name"`
-	Name           string `json:"name"`
+	Disambiguation string   `json:"disambiguation"`
+	ID             string   `json:"id"`
+	SortName       string   `json:"sort-name"`
+	Name           string   `json:"name"`
+	Score          int      `json:"score"`
+	Country        string   `json:"country"`
+	ISNIs          []string `json:"isnis"`
+	IPIs           []string `json:"ipis"`
+	Type           string   `json:"group"`
 }
 
 type ArtistCredit struct {

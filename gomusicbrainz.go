@@ -22,6 +22,10 @@ const (
 	musicalWorkPath  = "work/"
 	isrcPath         = "isrc/"
 	iswcPath         = "iswc/"
+	artistPath       = "artist/"
+	limit            = "10"
+	offset           = "0"
+	aliases          = "aliases"
 )
 
 var (
@@ -70,7 +74,7 @@ func GetWork(mbid string) (*Work, error) {
 	u := apiBaseURL + musicalWorkPath + mbid
 
 	params := make(map[string]string)
-	params["inc"] = "aliases"
+	params["inc"] = aliases
 	params = addJSONParam(params)
 
 	result, err := GET(u, params)
@@ -84,6 +88,7 @@ func GetWork(mbid string) (*Work, error) {
 	return &work, nil
 }
 
+// GetRecordingsByISRC returns Recording entities for a given isrc
 func GetRecordingsByISRC(isrc string) (*ISRC, error) {
 	if isrc == "" {
 		return nil, errors.New("ISRC is empty")
@@ -98,6 +103,7 @@ func GetRecordingsByISRC(isrc string) (*ISRC, error) {
 	params := make(map[string]string)
 	params["inc"] = "isrcs artist-credits"
 	params = addJSONParam(params)
+	params = addResultParams(params)
 
 	result, err := GET(u, params)
 	if err != nil {
@@ -110,6 +116,7 @@ func GetRecordingsByISRC(isrc string) (*ISRC, error) {
 	return &i, nil
 }
 
+// GetWorksByISWC returns Work entities for a given iswc
 func GetWorksByISWC(iswc string) (*ISWC, error) {
 	if iswc == "" {
 		return nil, errors.New("ISWC is empty")
@@ -122,8 +129,9 @@ func GetWorksByISWC(iswc string) (*ISWC, error) {
 	u := apiBaseURL + iswcPath + iswc
 
 	params := make(map[string]string)
-	params["inc"] = "aliases"
+	params["inc"] = aliases
 	params = addJSONParam(params)
+	params = addResultParams(params)
 
 	result, err := GET(u, params)
 	if err != nil {
@@ -136,6 +144,66 @@ func GetWorksByISWC(iswc string) (*ISWC, error) {
 	return &i, nil
 }
 
+// GetArtist returns the Artist entity for the given mbid
+func GetArtist(mbid string) (*Artist, error) {
+	if mbid == "" {
+		return nil, errors.New("MBID is empty")
+	}
+
+	u := apiBaseURL + artistPath + mbid
+
+	params := make(map[string]string)
+	params["inc"] = aliases
+	params = addJSONParam(params)
+
+	result, err := GET(u, params)
+	if err != nil {
+		return nil, err
+	}
+
+	var artist Artist
+	gjson.Unmarshal(result, &artist)
+
+	return &artist, nil
+}
+
+// SearchArtist returns the search results of the artists given
+// the artistName and the optional entry of country
+func SearchArtist(artistName string, country string) (*[]Artist, error) {
+	a := strings.TrimSpace(artistName)
+	if a == "" {
+		return nil, errors.New("artistName is empty")
+	}
+
+	u := apiBaseURL + artistPath
+
+	params := make(map[string]string)
+	params["query"] = fmt.Sprintf("artist:%s", a)
+
+	c := strings.TrimSpace(country)
+	if c != "" {
+		params["query"] += fmt.Sprintf(" AND country:%s", c)
+	}
+
+	params = addJSONParam(params)
+	params = addResultParams(params)
+
+	result, err := GET(u, params)
+	if err != nil {
+		return nil, err
+	}
+
+	var searchArtistResult SearchArtistResult
+	var artists *[]Artist
+	gjson.Unmarshal(result, &searchArtistResult)
+
+	if &searchArtistResult != nil {
+		artists = &searchArtistResult.Artists
+	}
+
+	return artists, nil
+}
+
 // SetMusicBrainzConfig sets the configuration requirements
 // Set these values before making any request
 func SetMusicBrainzConfig(appName string, appVersion string, contactURLOrEmail string) {
@@ -146,6 +214,8 @@ func SetMusicBrainzConfig(appName string, appVersion string, contactURLOrEmail s
 
 // REQUEST makes a standard HTTP call
 func REQUEST(method string, u string, body io.Reader) ([]byte, error) {
+	fmt.Println(u)
+
 	err := validateConfig()
 	if err != nil {
 		return nil, err
@@ -177,10 +247,11 @@ func REQUEST(method string, u string, body io.Reader) ([]byte, error) {
 	defer res.Body.Close()
 
 	fmt.Printf(`
-	   STATUS: %s
-	   RATE LIMIT: %s
-	   RATE LIMIT REMAINING: %s\n
-	   		`, res.Status, res.Header.Get("X-Ratelimit-Limit"), res.Header.Get("X-Ratelimit-Remaining"))
+STATUS: %s
+RATE LIMIT: %s
+RATE LIMIT REMAINING: %s
+
+`, res.Status, res.Header.Get("X-Ratelimit-Limit"), res.Header.Get("X-Ratelimit-Remaining"))
 
 	data, err := ioutil.ReadAll(res.Body)
 	if err != nil {
@@ -266,6 +337,12 @@ func getUserAgentString() string {
 
 func addJSONParam(params map[string]string) map[string]string {
 	params["fmt"] = "json"
+	return params
+}
+
+func addResultParams(params map[string]string) map[string]string {
+	params["limit"] = limit
+	params["offset"] = offset
 	return params
 }
 
